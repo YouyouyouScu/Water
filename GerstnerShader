@@ -1,0 +1,86 @@
+Shader "Water/GerstnerShader"
+{
+	Properties
+	{
+		_Steepness ("Steepness", Range(0, 1)) = 0.5 
+		_MainTex ("Texture", 2D) = "white" {}
+		_WaveLength ("WaveLength", float) = 0.5
+		_Amplitude("Amplitude", Range(0.0, 0.1)) = 0.05//振幅
+		_WaveDir ("WaveDirection", Vector) = (0.7, 0.8, 0.0, 0.0)
+		_WaveSpeed ("WaveSpeed", float) = 1.0
+	}
+	SubShader
+	{
+		Pass
+		{
+			CGPROGRAM
+			#pragma vertex vert
+			#pragma fragment frag
+			
+			#include "UnityCG.cginc"
+			
+			uniform float  _Steepness;
+			uniform float  _WaveLength;
+			uniform float  _Amplitude;
+			uniform float  _WaveSpeed;
+			uniform float4 _WaveDir; 
+
+			struct appdata
+			{
+				float4 vertex : POSITION;
+				float2 uv : TEXCOORD0;
+			};
+
+			struct v2f
+			{
+				float2 uv : TEXCOORD0;
+				float4 vertex : SV_POSITION;
+				float4 worldposition : TEXCOORD1;
+			};
+
+			//func
+			float3 gerstner_offset(float3 Pos)
+			{
+				float3 offset = float3(0.0, 0.0, 0.0);
+				//gerstner_basic = wD·(x,z) + φt
+				float w = 2 * 3.14 / _WaveLength;
+				float phi = _WaveSpeed * 2 * 3.14 / _WaveLength;
+				float gerstner_basic =  w * dot(_WaveDir.xy, Pos.xz) + phi * _Time.y;
+				
+				float QA = _Steepness * _Amplitude;
+				offset.x = QA * _WaveDir.x * cos(gerstner_basic);
+				offset.y = _Amplitude * sin(gerstner_basic);
+				offset.z = QA * _WaveDir.y * cos(gerstner_basic);
+				
+				return offset;
+			}
+			
+			v2f vert (appdata v)
+			{
+				v2f o;
+				float3 world_pos = mul(_Object2World, v.vertex);
+				float3 offset = gerstner_offset(world_pos);
+				o.worldposition.xyz = world_pos+offset;
+				//o.worldposition.xyz = world_pos;
+				o.worldposition.w = 1;
+				v.vertex.xyz = mul(_World2Object, float4(o.worldposition.xyz, 1));
+				o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
+				o.uv = v.uv;
+				return o;
+			}
+			
+			sampler2D _MainTex;
+
+			fixed4 frag (v2f i) : SV_Target
+			{
+				float3 normal = normalize(cross(ddx(i.worldposition.xyz), ddy(i.worldposition.xyz)));
+				fixed4 col = tex2D(_MainTex, i.uv);
+				//normal = ddy(i.vertex.xyz);
+				//col = fixed4(normal.x, normal.y, normal.z, 1.0);
+				// just invert the colors
+				return col;
+			}
+			ENDCG
+		}
+	}
+}
