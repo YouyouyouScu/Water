@@ -1,0 +1,283 @@
+Shader "FX/WaterForFun" {
+	Properties {
+		_G("G", Range(0.0, 10.0)) = 9.8
+		_Lambda1("Lambda1", Range(0.01, 4.0)) = 2.0
+		_Lambda2("Lambda2", Range(0.01, 4.0)) = 2.0
+		_Lambda3("Lambda3", Range(0.01, 4.0)) = 2.0
+		_Lambda4("Lambda4", Range(0.01, 4.0)) = 2.0
+		_Amplitude("Amplitude", Range(0.0, 0.1)) = 0.05
+		_A1("A1", Range(0.0, 1.0)) = 0.5 
+		_A2("A2", Range(0.0, 1.0)) = 0.5 
+		_A3("A3", Range(0.0, 1.0)) = 0.5 
+		_A4("A4", Range(0.0, 1.0)) = 0.5 
+		_PIE("_PIE", float) = 3.14
+		
+		DepthFac     ("深度影响因子", Range(0.03, 0.3)) = 0.1
+		WaveWidth    ("边缘波浪宽度", Range(0.0, 0.4)) = 0.2
+		WaveDistort  ("边缘波浪扰动因子", Range(0, 2)) = 1
+		FresnelFac   ("菲涅尔系数", Range(0, 1)) = 0.5
+					 
+		WaveScale    ("波浪伸缩系数", Range (0.02,0.15)) = 0.063
+		ReflDistort  ("反射扰动因子", Range (0,1.5)) = 0.44
+		RefrDistort  ("折射扰动因子", Range (0,1.5)) = 0.40
+		RefrColor    ("折射底色", COLOR)  = ( .34, .85, .92, 1)
+		WaveSpeed    ("波浪速度(反射(x, y), 折射(x, y))", Vector) = (19,9,-16,-7)
+		HorizonColor ("水基础色", COLOR)  = ( .172, .463, .435, 1)
+		WaveOffset 	 ("波浪纹理偏移值[自动生成]", float) = 0.0
+		WaveScale4   ("波浪纹理伸缩因子[自动生成]", float) = 0.0
+
+		[NoScaleOffset]WaveTexture     ("边缘波浪贴图", 2D) = "" {}
+		[NoScaleOffset]Fresnel         ("菲涅尔贴图", 2D) = "gray" {}
+		[NoScaleOffset]BumpMap         ("法线贴图 ", 2D) = "bump" {}
+
+		[NoScaleOffset]ReflectiveColor ("菲涅尔贴图(简单模式)", 2D) = "" {}
+		[NoScaleOffset]ReflectionTex   ("反射贴图[自动生成]", 2D) = "" {}
+		[NoScaleOffset]RefractionTex   ("折射贴图[自动生成]", 2D) = "" {}
+	}
+
+
+// -----------------------------------------------------------
+// Fragment program cards
+
+
+	Subshader {
+		Tags { "WaterMode"="Refractive" "RenderType"="Transparent" }
+
+		Blend one zero //折射光线为实时得到
+		//blend SrcAlpha OneMinusSrcAlpha //没有折射光线，直接做blend
+
+		Pass {
+			CGPROGRAM
+			#pragma vertex vert
+			#pragma fragment frag
+			#pragma multi_compile WATER_REFRACTIVE WATER_REFLECTIVE WATER_SIMPLE
+			
+			uniform float _G;
+			uniform float _Lambda1;
+			uniform float _Lambda2;
+			uniform float _Lambda3;
+			uniform float _Lambda4;
+			uniform float _Amplitude;
+			uniform float _A1;
+			uniform float _A2;
+			uniform float _A3;
+			uniform float _A4;
+			uniform float _PIE = 3.14;
+
+			#if defined (WATER_REFLECTIVE) || defined (WATER_REFRACTIVE)
+			#define HAS_REFLECTION 1
+			#endif
+
+			#if defined (WATER_REFRACTIVE)
+			#define HAS_REFRACTION 1
+			#endif
+
+
+			#include "UnityCG.cginc"
+
+			uniform float4 WaveScale4;
+			uniform float4 WaveOffset;
+
+			#if HAS_REFLECTION
+			uniform float ReflDistort;
+			#endif
+
+			#if HAS_REFRACTION
+			uniform float RefrDistort;
+			#endif
+
+			struct appdata {
+				float4 vertex : POSITION;
+				float3 normal : NORMAL;
+			};
+
+			struct v2f {
+					float4 pos : SV_POSITION;
+					float4 ref : TEXCOORD0;
+					float2 bumpuv0 : TEXCOORD1;
+					float2 bumpuv1 : TEXCOORD2;
+					float3 view_dir : TEXCOORD3;
+			};
+
+			v2f vert(appdata v)
+			{
+				v2f o;
+				
+				float3 direction1 = float3(1.0, 0.0, 0.0);
+				float3 direction2 = float3(-1.0, 0.0, 0.0);
+				float3 direction3 = float3(0.0, 0.0, 1.0);
+				float3 direction4 = float3(1.0, 0.0, -1.0);
+				
+				float4 Position = v.vertex;
+
+				//x正方向波
+				float vv = sqrt(_G * _Lambda1 / (2 * _PIE));
+				float psi = 2 * _PIE / _Lambda1 * (dot(v.vertex.xyz, direction1) + vv * _Time.y);
+				float s = lerp( -cos(psi), sin(psi), _A1) * _Amplitude;
+				Position.y += s;
+				//end
+
+				//x负方向波
+				vv = sqrt(_G * _Lambda2 / (2 * _PIE));
+				psi = 2 * _PIE / _Lambda2 * (dot(v.vertex.xyz, direction2) + vv * _Time.y);
+				s = lerp( -cos(psi), sin(psi), _A2) * _Amplitude;
+				Position.y += s;
+				//end
+
+				//z正方向波
+				vv = sqrt(_G * _Lambda3 / (2 * _PIE));
+				psi = 2 * _PIE / _Lambda3 * (dot(v.vertex.xyz, direction3) + vv * _Time.y);
+				s = lerp( -cos(psi), sin(psi), _A3) * _Amplitude;
+				Position.y += s;
+				//end
+
+				//z负方向波
+				vv = sqrt(_G * _Lambda4 / (2 * _PIE));
+				psi = 2 * _PIE / _Lambda4 * (dot(v.vertex.xyz, direction4) + vv * _Time.y);
+				s = lerp( -cos(psi), sin(psi), _A4) * _Amplitude;
+				Position.y += s;
+				//end
+
+				v.vertex.xyz = Position.xyz;
+				
+				o.pos = mul (UNITY_MATRIX_MVP, v.vertex);
+
+				float4 temp_bumpuvs;
+				float4 world_pos = mul (_Object2World, v.vertex);
+				temp_bumpuvs.xyzw = world_pos.xzxz * WaveScale4 + WaveOffset;
+				o.bumpuv0 = temp_bumpuvs.xy;
+				o.bumpuv1 = temp_bumpuvs.wz;
+
+				o.view_dir.xzy = WorldSpaceViewDir(v.vertex);
+				
+				o.ref = ComputeScreenPos(o.pos);
+				COMPUTE_EYEDEPTH(o.ref.z);
+				return o;
+			}
+
+			#if defined (WATER_REFLECTIVE) || defined (WATER_REFRACTIVE)
+			uniform sampler2D ReflectionTex;
+			uniform sampler2D Fresnel;
+			#endif
+
+			#if defined (WATER_REFRACTIVE)
+			uniform sampler2D RefractionTex;
+			uniform float4    RefrColor;
+			#endif
+
+			uniform sampler2D BumpMap;
+			uniform sampler2D WaveTexture;
+			uniform sampler2D ReflectiveColor;
+			uniform sampler2D _CameraDepthTexture;
+
+			uniform float4    HorizonColor;
+			uniform float     WaveDistort;
+			uniform float     WaveWidth;
+			uniform float     DepthFac;
+			uniform float     FresnelFac;
+
+			half4 frag( v2f i ) : SV_Target
+			{
+				i.view_dir = normalize(i.view_dir);
+
+				half3 bump1 = UnpackNormal(tex2D( BumpMap, i.bumpuv0 )).rgb;
+				half3 bump2 = UnpackNormal(tex2D( BumpMap, i.bumpuv1 )).rgb;
+				half3 bump = (bump1 + bump2) * 0.5;
+				half fresnel_fac = dot( i.view_dir, bump );
+
+				//简单情况:边缘波动偏移(uv_wave)由wavedistort决定
+				//反射情况:边缘波动偏移由wavedistort和refldistort决定
+				//折射情况:边缘波动偏移由wavedistort和refrdistort决定
+				float4 uv_wave = i.ref; 
+
+				half4 water_basic_color = tex2D( ReflectiveColor, float2(fresnel_fac,fresnel_fac) );
+				water_basic_color.rgb = half3(0.1, 0.1, 0.1) + water_basic_color.rgb;//改善目光垂直于水面时发黑的现象
+				water_basic_color.rgb = half3(water_basic_color.r * HorizonColor.r, water_basic_color.g * HorizonColor.g, water_basic_color.b * HorizonColor.b);
+				
+				#if HAS_REFLECTION
+				float4 uv1 = i.ref; uv1.xy += bump * ReflDistort;
+				half4 reflctive_color = tex2Dproj( ReflectionTex, UNITY_PROJ_COORD(uv1) );
+
+				#endif
+				#if HAS_REFRACTION
+				float4 uv2 = i.ref; uv2.xy -= bump * RefrDistort;
+				half4 refractive_color = tex2Dproj( RefractionTex, UNITY_PROJ_COORD(uv2) ) * RefrColor;
+				#endif
+
+				half4 final_color;
+				
+				#if defined(WATER_REFRACTIVE)
+				water_basic_color.rgb = lerp( water_basic_color.rgb, HorizonColor.rgb, water_basic_color.a );
+				uv_wave.xy -= bump * RefrDistort * WaveDistort;
+				float raw_depth = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(uv_wave)).r;
+				float basic_depth = LinearEyeDepth(raw_depth);
+				float depth_fac = saturate(DepthFac * (basic_depth - i.ref.z));
+				bool is_error_edge = false;
+				if (basic_depth < i.ref.z)//处理水中物体上边缘由于纹理偏移引起水波颜色失真情况，没有解决这个问题，只是做了微调，欺骗眼睛
+				{
+					is_error_edge = true;
+				}
+				half fresnel = UNITY_SAMPLE_1CHANNEL(Fresnel, float2(fresnel_fac, fresnel_fac));
+				final_color.rgb = lerp(water_basic_color.rgb, reflctive_color.rgb, fresnel * FresnelFac);
+				final_color.a = 1.0;
+
+				//如果不用折射相机，直接做Blend，那么Blend函数改成blend SrcAlpha OneMinusSrcAlpha
+				//此句改成 final_color.a = depth_fac;
+				//final_color.a = depth_fac;
+				final_color = lerp(refractive_color, final_color, depth_fac);
+
+				if (is_error_edge)
+				{
+					final_color = water_basic_color;
+				}
+//				if(basic_depth > 1.0 && i.ref.z > 1.0)
+//				{
+//					final_color = half4(1.0, 1.0, 0.0, 1.0);
+//				}
+
+				#endif
+				
+				#if defined(WATER_REFLECTIVE)
+				uv_wave.xy += bump * ReflDistort * WaveDistort;
+				float raw_depth = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(uv_wave)).r;
+				float basic_depth = LinearEyeDepth(raw_depth);
+				float depth_fac = saturate(DepthFac * (basic_depth - i.ref.z));
+				bool is_error_edge = false;
+				if (basic_depth < i.ref.z)
+				{
+					is_error_edge = true;
+				}
+				water_basic_color.rgb = lerp( water_basic_color.rgb, HorizonColor.rgb, water_basic_color.a );
+				half fresnel = UNITY_SAMPLE_1CHANNEL(Fresnel, float2(fresnel_fac, fresnel_fac));
+				final_color.rgb = lerp(water_basic_color.rgb, reflctive_color.rgb, fresnel * FresnelFac);
+				final_color.a = 1.0;
+				#endif
+				
+				#if defined(WATER_SIMPLE)
+				uv_wave.xy -= bump * WaveDistort;
+				float raw_depth = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(uv_wave)).r;
+				float basic_depth = LinearEyeDepth(raw_depth);
+				float depth_fac = saturate(DepthFac * (basic_depth - i.ref.z));
+				bool is_error_edge = false;
+				if (basic_depth < i.ref.z)
+				{
+					is_error_edge = true;
+				}
+				final_color.rgb = lerp( water_basic_color.rgb, HorizonColor.rgb, water_basic_color.a );
+				final_color.a = 1.0;
+				#endif
+
+				if (depth_fac < WaveWidth && !is_error_edge)//由于WaveWidth是个定值，而depth_fac受DepthFac影响，所以改变DepthFac时会出现波浪边缘宽度变得很大或者很小的情况，需要手动重新设置WaveWidth
+				{
+					//当水面与水底直接blend的情况， 此时final_color的Alpha值应该与采样相同，这要求WaveTexture有Alpha通道
+					final_color = tex2Dproj(WaveTexture, UNITY_PROJ_COORD(uv_wave));
+					final_color = final_color * final_color.a;
+					//final_color = tex2Dproj(WaveTexture, UNITY_PROJ_COORD(uv_wave));
+				}
+
+				return final_color;
+			}
+			ENDCG
+		}
+	}
+}
