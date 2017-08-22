@@ -1,0 +1,194 @@
+Shader "Water/WaterSzecsi" {
+	Properties {
+		[Header(Water Common Factor)]
+		DepthFac   ("深度影响因子",Range(0.0, 2.0)) = 2.0
+		FresnelFac   ("菲涅尔系数(水-反射)", Range(0, 2)) = 0.5			 
+		WaveScale    ("波浪伸缩系数", Range (0.0,0.15)) = 0.063
+		WaveSpeed    ("波浪速度(反射(x, y), 折射(x, y))", Vector) = (2, 2, 2, 2)
+		WaveOffset 	 ("波浪纹理偏移值[自动生成]", Vector) = (0, 0, 0, 0)
+		WaveScale4   ("波浪纹理伸缩因子[自动生成]", Vector) = (0, 0, 0, 0)
+
+		[Space(30)]
+
+		[Header(Water Reflective Factor)]
+		ReflDistort  ("反射扰动因子", Range (0,5.0)) = 2
+
+		[Space(30)]
+
+		[Header(Water Refractive Factor)]
+		RefrDistort  ("折射扰动因子", Range (0,1.5)) = 0.40
+		RefrColor    ("折射底色", COLOR)  = ( .34, .85, .92, 1)
+
+		[Space(30)]
+
+		[Header(Foam Factor)]
+		FoamSpread ("波浪宽度", Range(0.01,2)) = 2
+		FoamStrength ("波浪强度", Range(0.01,2)) = 0.8
+		FoamSmooth ("波浪模糊因子", Range(0,0.5)) = 0.02
+		FoamSpeed ("波浪速度", Vector) = (2,2,2,2)
+		FoamColor ("波浪颜色(Alpha)", Color) = (0.9,0.9,0.9,1.0)
+
+		[Space(30)]
+
+		[Header(Water Texture]
+		WaveTexture     ("边缘波浪贴图", 2D) = "" {}
+		BumpMap         ("法线贴图 ", 2D) = "bump" {}
+		HorizonColor ("水基础色", color)  = (0.9,0.9,0.9,1.0)
+		Fresnel		 ("菲涅尔贴图", 2D) = "gray" {}
+		FresnelColor ("菲涅尔颜色贴图", 2D) = "gray" {}
+
+		[NoScaleOffset]ReflectionTex   ("反射贴图[自动生成]", 2D) = "" {}
+		[NoScaleOffset]RefractionTex   ("折射贴图[自动生成]", 2D) = "" {}
+	}
+
+
+// -----------------------------------------------------------
+// Fragment program cards
+
+
+	Subshader {
+		Tags { "Queue" = "Transparent" "RenderType" = "Transparent" }
+
+		blend SrcAlpha OneMinusSrcAlpha
+		ZTest off
+		ZWrite off
+
+		Pass {
+			CGPROGRAM
+			#pragma vertex vert
+			#pragma fragment frag
+
+			#include "UnityCG.cginc"
+
+			uniform half4  WaveSpeed;
+			uniform fixed  WaveScale;
+			uniform half4 WaveScale4;
+			uniform half4 WaveOffset;
+
+			uniform half ReflDistort;
+			uniform fixed RefrDistort;
+
+			struct appdata {
+				float4 vertex : POSITION;
+				float2 texcoord : TEXCOORD0;
+				float3 normal : NORMAL;
+			};
+
+			struct v2f {
+					float4 pos : SV_POSITION;
+					float4 ref : TEXCOORD0;
+					float2 bumpuv0 : TEXCOORD1;
+					float2 bumpuv1 : TEXCOORD2;
+					float3 view_dir : TEXCOORD3;
+					float2 foam_texcoord : TEXCOORD4;
+			};
+
+			uniform fixed4 HorizonColor;
+			uniform sampler2D BumpMap;
+			uniform sampler2D WaveTexture;
+
+			half4 BumpMap_ST;
+			half4 WaveTexture_ST;
+			
+			v2f vert(appdata v)
+			{
+				v2f o;
+				o.pos = mul (UNITY_MATRIX_MVP, v.vertex);
+				o.foam_texcoord = TRANSFORM_TEX(v.texcoord, WaveTexture);
+
+				float4 temp_bumpuvs;
+				float4 world_pos = mul (_Object2World, v.vertex);
+				temp_bumpuvs.xyzw = world_pos.xzxz * WaveScale4 + WaveOffset;
+				o.bumpuv0 = temp_bumpuvs.xy * BumpMap_ST.xy + BumpMap_ST.zw;
+				o.bumpuv1 = temp_bumpuvs.wz * BumpMap_ST.xy + BumpMap_ST.zw;
+
+				o.view_dir.xzy = WorldSpaceViewDir(v.vertex);
+				
+				o.ref = ComputeScreenPos(o.pos);
+				COMPUTE_EYEDEPTH(o.ref.z);
+				return o;
+			}
+
+			uniform sampler2D ReflectionTex;
+
+			uniform sampler2D RefractionTex;
+			uniform fixed4    RefrColor;
+
+			uniform sampler2D_float _CameraDepthTexture;
+			uniform sampler2D Fresnel;
+			uniform sampler2D FresnelColor;
+
+			uniform fixed FoamSpread;
+         	uniform fixed FoamStrength;
+        	uniform fixed FoamSmooth;
+         	uniform half4 FoamSpeed;
+			uniform fixed4 FoamColor;
+			uniform fixed FresnelFac;
+			uniform fixed DepthFac;
+
+			fixed4 frag( v2f i ) : SV_Target
+			{
+				i.view_dir = normalize(i.view_dir);
+				
+				fixed raw_depth_no_distort = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(i.ref)).r;
+				#if defined(UNITY_REVERSED_Z)
+				raw_depth_no_distort = 1.0f - raw_depth_no_distort;
+				#endif
+				half basic_depth_no_distort = LinearEyeDepth(raw_depth_no_distort);
+				fixed foam_depth_fac = saturate(FoamSpread * (basic_depth_no_distort - i.ref.z));
+
+				fixed2 foam_uv = i.foam_texcoord;
+				foam_uv.xy += _Time.xx * FoamSpeed.xy * 0.05;
+				fixed4 wave_color1 = tex2D(WaveTexture, foam_uv);
+
+				foam_uv.xy += _Time.xx * FoamSpeed.zw * 0.05;
+				fixed4 wave_color2 = tex2D(WaveTexture, foam_uv);
+
+				fixed4 wave_color = (wave_color1 + wave_color2) * 0.5;
+				fixed foamTerm = (smoothstep(wave_color.r - FoamSmooth, wave_color.r + FoamSmooth, saturate(FoamStrength - foam_depth_fac)) * saturate(1 - foam_depth_fac)) * FoamColor.a;
+
+				fixed3 bump1 = UnpackNormal(tex2D( BumpMap, i.bumpuv0 )).rgb;
+				fixed3 bump2 = UnpackNormal(tex2D( BumpMap, i.bumpuv1 )).rgb;
+				fixed3 bump = (bump1 + bump2) * 0.5;
+				fixed fresnel_fac = dot( i.view_dir, bump );
+
+				fixed4 water_basic_color = tex2D( FresnelColor, float2(fresnel_fac,fresnel_fac) );
+				half4 uv1 = i.ref; uv1.xy += bump * ReflDistort;
+				fixed4 reflctive_color = tex2Dproj( ReflectionTex, UNITY_PROJ_COORD(uv1) );
+
+				half4 uv2 = i.ref; uv2.xy -= bump * RefrDistort;
+				fixed4 refractive_color = tex2Dproj( RefractionTex, UNITY_PROJ_COORD(uv2) ) * RefrColor;
+
+				fixed4 final_color;
+
+				water_basic_color.rgb = lerp( water_basic_color.rgb, HorizonColor.rgb, water_basic_color.a );
+				fixed raw_depth = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(i.ref)).r;
+				half basic_depth = LinearEyeDepth(raw_depth);
+				fixed depth_fac = saturate(DepthFac * DepthFac * DepthFac * (basic_depth - i.ref.z));
+				bool is_error_edge = false;
+				if (basic_depth < i.ref.z)
+				{
+					is_error_edge = true;
+				}
+				fixed fresnel = UNITY_SAMPLE_1CHANNEL(Fresnel, float2(fresnel_fac, fresnel_fac));
+				final_color.rgb = lerp(water_basic_color.rgb, reflctive_color.rgb, fresnel * FresnelFac);
+				final_color.a = 1.0;
+
+				final_color = lerp(refractive_color, final_color, depth_fac);	
+
+				if (!is_error_edge)
+				{
+					final_color = lerp(final_color, FoamColor, foamTerm);
+					final_color.a = 1.0;
+				}
+				else
+				{
+					final_color.a = 0.0;
+				}
+				//final_color = half4(1.0, 0.0, 0.0, 1.0);
+				return final_color;
+			}
+			ENDCG
+		}
+	}
+}
